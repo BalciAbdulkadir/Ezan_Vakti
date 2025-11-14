@@ -3,36 +3,43 @@ package com.example.ezan_vakti
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.WbSunny
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ezan_vakti.model.PrayerTime
 import com.example.ezan_vakti.viewmodel.MainViewModel
+import java.text.SimpleDateFormat
+import java.util.Locale
+
+// Tema Renkleri
+val IslamicGreen = Color(0xFF1B5E20) // Koyu Yeşil
+val SoftGreen = Color(0xFF4CAF50)    // Açık Yeşil (Gradyan için)
+val GoldColor = Color(0xFFFFD700)    // Altın Rengi (Sayaç çizgisi)
 
 class MainActivity : ComponentActivity() {
-    // ViewModel'i burada başlatıyoruz
-    private val viewModel = MainViewModel()
+
+    private val viewModel: MainViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            // Uygulamanın ana teması
             MaterialTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    EzanVaktiEkrani(viewModel)
-                }
+                EzanVaktiEkrani(viewModel = viewModel)
             }
         }
     }
@@ -41,105 +48,208 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EzanVaktiEkrani(viewModel: MainViewModel) {
-    // Kullanıcının yazdığı şehir ismini tutan değişken
-    var sehirIsmi by remember { mutableStateOf("Istanbul") }
 
-    // ViewModel'den gelen verileri dinliyoruz
-    val namazVakitleri = viewModel.prayerTimes.value
-    val yukleniyor = viewModel.isLoading.value
-    val hataMesaji = viewModel.errorMessage.value
+    val namazVakitleri by viewModel.prayerTimes
+    val yukleniyor by viewModel.isLoading
+    val hataMesaji by viewModel.errorMessage
 
-    Column(
+    // Arama kutusundaki metni, ViewModel'deki 'currentCity' ile senkronize ediyoruz
+    var sehirIsmi by remember { mutableStateOf(viewModel.currentCity.value) }
+
+    // Hafızadan veri gelince arama kutusunu güncelle
+    LaunchedEffect(viewModel.currentCity.value) {
+        sehirIsmi = viewModel.currentCity.value
+    }
+
+    // API'den gelen 30 günlük listenin sadece ilkini (bugünü) alıyoruz
+    val bugununVakti = namazVakitleri.firstOrNull()
+
+    // --- ANA KAPLAYICI (Box) ---
+    // Arka plana yeşil gradyan (renk geçişi) DEĞİŞTİRİLECEK!!!!!!!!
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .background(
+                brush = Brush.verticalGradient(
+                    colors = listOf(SoftGreen, Color(0xFFE8F5E9), Color.White),
+                    startY = 0f,
+                    endY = 2000f // Geçişin uzunluğu
+                )
+            )
     ) {
-        // --- Başlık ---
-        Text(
-            text = "Ezan Vakti",
-            fontSize = 28.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // --- Arama Kutusu ve Buton ---
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 24.dp, vertical = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
+
+            // ÜST KISIM: Şehir ve Tarih
+            Text(
+                text = viewModel.currentCity.value.uppercase(Locale("tr", "TR")),
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = IslamicGreen
+            )
+
+            Text(
+                text = formatTarih(bugununVakti?.date), // Tarihi güzelleştirdik
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.DarkGray
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Geri Sayım Kartı
+            GeriSayimKarti(bugununVakti)
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            //  Vakitler Izgarası
+            if (bugununVakti != null) {
+                VakitIzgarasi(bugununVakti = bugununVakti)
+            } else if (yukleniyor) {
+                CircularProgressIndicator(color = IslamicGreen)
+            }
+
+            // Arama kutusunu en alta alıyoruz
+            Spacer(modifier = Modifier.weight(1f)) // Kalan tüm boşluğu ittir
+
             OutlinedTextField(
                 value = sehirIsmi,
                 onValueChange = { sehirIsmi = it },
-                label = { Text("Şehir Girin (Örn: Ankara)") },
-                modifier = Modifier.weight(1f)
+                label = { Text("Şehir Değiştir") },
+                modifier = Modifier.fillMaxWidth(),
+                trailingIcon = {
+                    IconButton(onClick = { viewModel.getTimesByCity(sehirIsmi) }) {
+                        Icon(Icons.Outlined.Search, contentDescription = "Ara", tint = IslamicGreen)
+                    }
+                },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = IslamicGreen,
+                    focusedLabelColor = IslamicGreen,
+                    cursorColor = IslamicGreen
+                )
             )
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            Button(onClick = {
-                // Butona basınca ViewModel'e "Git bul" diyoruz
-                viewModel.getTimesByCity(sehirIsmi)
-            }) {
-                Text("Bul")
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // --- Durum Göstergeleri ---
-        if (yukleniyor) {
-            CircularProgressIndicator() // Dönen yükleniyor çemberi
-        }
-
-        if (hataMesaji.isNotEmpty()) {
-            Text(text = hataMesaji, color = Color.Red)
-        }
-
-        // --- Liste (Namaz Vakitleri) ---
-        LazyColumn(
-            modifier = Modifier.fillMaxSize()
-        ) {
-            items(namazVakitleri) { vakit ->
-                NamazVaktiKarti(vakit)
+            if (hataMesaji.isNotEmpty()) {
+                Text(text = hataMesaji, color = Color.Red, modifier = Modifier.padding(top = 8.dp))
             }
         }
     }
 }
 
 @Composable
-fun NamazVaktiKarti(vakit: PrayerTime) {
+fun GeriSayimKarti(bugununVakti: PrayerTime?) {
     Card(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        elevation = CardDefaults.cardElevation(4.dp)
+            .fillMaxWidth(),
+        elevation = CardDefaults.cardElevation(10.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(text = "Tarih: ${vakit.date}", fontWeight = FontWeight.Bold)
-            Divider(modifier = Modifier.padding(vertical = 8.dp))
+        Column(
+            modifier = Modifier
+                .padding(vertical = 24.dp, horizontal = 16.dp)
+                .fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "YATSININ ÇIKMASINA", // Burası da dinamik olacak
+                color = Color.Gray,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
 
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                VakitSatiri("İmsak", vakit.fajr)
-                VakitSatiri("Güneş", vakit.sun)
-                VakitSatiri("Öğle", vakit.dhuhr)
-            }
             Spacer(modifier = Modifier.height(8.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                VakitSatiri("İkindi", vakit.asr)
-                VakitSatiri("Akşam", vakit.maghrib)
-                VakitSatiri("Yatsı", vakit.isha)
+
+            // Burası şimdilik Statik
+            Text(
+                text = "06 : 59 : 45",
+                fontSize = 48.sp,
+                fontWeight = FontWeight.Bold,
+                color = IslamicGreen,
+                textAlign = TextAlign.Center
+            )
+
+            // saniye saniye saniye yazısı
+            Row(modifier = Modifier.fillMaxWidth(0.8f), horizontalArrangement = Arrangement.SpaceAround) {
+                Text("saat", fontSize = 12.sp, color = Color.LightGray)
+                Text("dakika", fontSize = 12.sp, color = Color.LightGray)
+                Text("saniye", fontSize = 12.sp, color = Color.LightGray)
             }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // İlerleme Çubuğu (Sarı Çizgi)
+            LinearProgressIndicator(
+                progress = 0.3f, // %30 dolu
+                modifier = Modifier.fillMaxWidth().height(8.dp).padding(horizontal = 16.dp),
+                color = GoldColor,
+                trackColor = Color.Gray.copy(alpha = 0.2f)
+            )
         }
     }
 }
 
 @Composable
-fun VakitSatiri(isim: String, saat: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = isim, fontSize = 12.sp, color = Color.Gray)
-        Text(text = saat, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+fun VakitIzgarasi(bugununVakti: PrayerTime) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            //ikonları kullanıyoruz
+            VakitItem(icon = Icons.Outlined.WbTwilight, ad = "İmsak", saat = bugununVakti.fajr ?: "--:--")
+            VakitItem(icon = Icons.Outlined.WbSunny, ad = "Güneş", saat = bugununVakti.sun ?: "--:--")
+            VakitItem(icon = Icons.Filled.WbSunny, ad = "Öğle", saat = bugununVakti.dhuhr ?: "--:--")
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            VakitItem(icon = Icons.Outlined.WbCloudy, ad = "İkindi", saat = bugununVakti.asr ?: "--:--")
+            VakitItem(icon = Icons.Outlined.NightsStay, ad = "Akşam", saat = bugununVakti.maghrib ?: "--:--")
+            VakitItem(icon = Icons.Filled.DarkMode, ad = "Yatsı", saat = bugununVakti.isha ?: "--:--")
+        }
+    }
+}
+
+
+@Composable
+fun VakitItem(icon: ImageVector, ad: String, saat: String) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.width(80.dp) // Hepsini hizalamak için
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = ad,
+            tint = Color.Gray,
+            modifier = Modifier.size(28.dp)
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(text = ad, fontSize = 13.sp, color = Color.Gray)
+        Text(
+            text = saat,
+            fontSize = 17.sp,
+            fontWeight = FontWeight.Bold,
+            color = IslamicGreen
+        )
+    }
+}
+
+// API'den gelen "2025-11-14T00:00:00" tarihini "14 Kasım 2025" yapar
+fun formatTarih(tarih: String?): String {
+    if (tarih == null) return "Tarih yükleniyor..."
+    return try {
+        val apiFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault())
+        val hedefFormat = SimpleDateFormat("dd MMMM yyyy", Locale("tr", "TR"))
+        val dateObj = apiFormat.parse(tarih)
+        hedefFormat.format(dateObj!!)
+    } catch (e: Exception) {
+        "Tarih formatlanamadı"
     }
 }

@@ -53,6 +53,18 @@ dependencies {
     // Retrofit ve Gson (İnternetten veri çekmek için)
     implementation("com.squareup.retrofit2:retrofit:2.9.0")
     implementation("com.squareup.retrofit2:converter-gson:2.9.0")
+    // Hafıza (DataStore) için
+    implementation("androidx.datastore:datastore-preferences:1.0.0")
+
+    // 'AndroidViewModel' komutunu tanimasi için
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0")
+
+    // 'by viewModels()' komutunu tanimasi için
+    implementation("androidx.activity:activity-compose:1.8.0")
+
+    // Malzeme Tasarımı Genişletilmiş İkonları (Güneş, Ay, Bulut vs.)
+    implementation("androidx.compose.material:material-icons-extended:1.6.7")
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

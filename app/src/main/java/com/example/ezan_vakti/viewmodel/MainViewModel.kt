@@ -1,62 +1,77 @@
 package com.example.ezan_vakti.viewmodel
 
+import android.app.Application
 import androidx.compose.runtime.mutableStateOf
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.ezan_vakti.data.DataStoreManager
 import com.example.ezan_vakti.model.PrayerTime
 import com.example.ezan_vakti.network.RetrofitInstance
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
-class MainViewModel : ViewModel() {
+// ViewModel değil, AndroidViewModel
+class MainViewModel(application: Application) : AndroidViewModel(application) {
 
-    // Ekranda göstereceğimiz namaz vakitleri listesi (Başlangıçta boş)
+    private val dataStoreManager = DataStoreManager(application) // Hafıza
+
     val prayerTimes = mutableStateOf<List<PrayerTime>>(emptyList())
-
-    // Yükleniyor simgesi göstermek için bir durum (Başlangıçta false)
     val isLoading = mutableStateOf(false)
-
-    // Hata olursa mesajı göstermek için
     val errorMessage = mutableStateOf("")
+    val currentCity = mutableStateOf("Istanbul") // Kayıtlı şehri tutan değişken
 
-    // Şehir adına göre verileri çeken asıl fonksiyon
+    init {
+        loadLastCity() // Uygulama açılırken hafızayı yükle
+    }
 
+    private fun loadLastCity() {
+        viewModelScope.launch {
+            val savedCity = dataStoreManager.getCity.first()
+            currentCity.value = savedCity
+            getTimesByCity(savedCity, isAutoLoad = true) // Otomatik veri çek
+        }
+    }
 
-    fun getTimesByCity(cityName: String) {
+    private fun normalizeCityName(cityName: String): String {
+        val original = "ıİşŞğĞüÜöÖçÇ"
+        val normalized = "iissgguuooicc"
+        return cityName.map { char ->
+            val index = original.indexOf(char)
+            if (index >= 0) normalized[index] else char
+        }.joinToString("")
+    }
+
+    fun getTimesByCity(cityName: String, isAutoLoad: Boolean = false) {
         viewModelScope.launch {
             isLoading.value = true
             errorMessage.value = ""
 
             try {
-                // DÜZELTME: Gelen şehri Türkçe kurallarına göre düzeltiyoruz.
-                // Örn: "izmir" -> "İzmir", "şarkışla" -> "Şarkışla"
                 val locale = java.util.Locale("tr", "TR")
-                val duzeltilmisSehir = cityName.trim().lowercase(locale).replaceFirstChar {
-                    if (it.isLowerCase()) it.titlecase(locale) else it.toString()
-                }
+                val duzeltilmisSehir = cityName.trim().lowercase(locale)
+                val apiCityName = normalizeCityName(duzeltilmisSehir)
 
-                // Logcat'e yazdıralım (Aşağıda anlatacağım)
-                println("Aranan Şehir (Orijinal): $cityName")
-                println("Aranan Şehir (Düzeltilmiş): $duzeltilmisSehir")
-
-                // 1. Adım: Arama yap
-                val locationList = RetrofitInstance.api.searchLocation(duzeltilmisSehir)
+                val locationList = RetrofitInstance.api.searchLocation(apiCityName)
 
                 if (locationList.isNotEmpty()) {
                     val cityId = locationList[0].id
-                    println("Bulunan Şehir ID: $cityId") // ID'yi buldu mu görelim
-
-                    // 2. Adım: Vakitleri çek
-                    val times = RetrofitInstance.api.getPrayerTimes(cityId)
+                    val times = RetrofitInstance.api.getPrayerTimes(cityId) // ApiService'teki ad
                     prayerTimes.value = times
-                } else {
-                    // Eğer liste boş geldiyse
-                    errorMessage.value = "$duzeltilmisSehir bulunamadı! Tam adını yazmayı deneyin (örn: Üsküdar)."
-                    println("HATA: Şehir listesi boş döndü.")
-                }
+                    errorMessage.value = ""
 
+                    // Sadece kullanıcı butona bastıysa kaydet
+                    if (!isAutoLoad) {
+                        dataStoreManager.saveCity(duzeltilmisSehir)
+                        currentCity.value = duzeltilmisSehir
+                    }
+                } else {
+                    errorMessage.value = "'${cityName}' bulunamadı!"
+                    prayerTimes.value = emptyList()
+                }
             } catch (e: Exception) {
-                errorMessage.value = "Hata: ${e.localizedMessage}"
-                e.printStackTrace() // Hatayı Logcat'e yazdır
+                errorMessage.value = "Hata: İnternet bağlantınızı kontrol edin."
+                prayerTimes.value = emptyList()
+                e.printStackTrace()
             } finally {
                 isLoading.value = false
             }
