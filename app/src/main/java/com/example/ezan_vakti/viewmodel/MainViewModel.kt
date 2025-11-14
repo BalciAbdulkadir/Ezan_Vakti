@@ -2,64 +2,101 @@ package com.example.ezan_vakti.viewmodel
 
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.ezan_vakti.data.DataStoreManager
 import com.example.ezan_vakti.model.PrayerTime
 import com.example.ezan_vakti.network.RetrofitInstance
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
-class MainViewModel : ViewModel() {
+// DataStore'u kullanabilmek için ViewModel'in kurucusuna eklememiz gerekiyor.
+class MainViewModel(private val dataStoreManager: DataStoreManager) : ViewModel() {
 
-    // Ekranda göstereceğimiz namaz vakitleri listesi (Başlangıçta boş)
+    // Bu state'ler Composable fonksiyonlar tarafından dinlenecek.
     val prayerTimes = mutableStateOf<List<PrayerTime>>(emptyList())
-
-    // Yükleniyor simgesi göstermek için bir durum (Başlangıçta false)
     val isLoading = mutableStateOf(false)
-
-    // Hata olursa mesajı göstermek için
     val errorMessage = mutableStateOf("")
+    val currentCity = mutableStateOf("İstanbul") // Başlangıçta ve aramalarda kullanılacak şehir.
 
-    // Şehir adına göre verileri çeken asıl fonksiyon
+    init {
+        // ViewModel ilk ayağa kalktığında, hafızadaki son şehri yüklemeyi dene.
+        // Bu, uygulama her açıldığında kullanıcının en son baktığı yeri görmesini sağlar.
+        viewModelScope.launch {
+            // DataStore'dan veriyi `flow.first()` ile tek seferlik çekiyoruz.
+            val savedCity = dataStoreManager.getLastCity().first() ?: "istanbul" // Eğer kayıtlı şehir yoksa İstanbul'u kullan.
+            getTimesByCity(savedCity)
+        }
+    }
 
+    // API, "niğde" gibi Türkçe karakterli sorguları anlamıyor.
+    // Bu yüzden "nigde" gibi bir formata çevirmemiz lazım.
+    private fun normalizeCityName(cityName: String): String {
+        val original = "ıİşŞğĞüÜöÖçÇ"
+        val normalized = "iissgguuooicc"
+        return cityName.map { char ->
+            val index = original.indexOf(char)
+            if (index >= 0) normalized[index] else char
+        }.joinToString("")
+    }
 
     fun getTimesByCity(cityName: String) {
+        // Ana UI thread'ini bloklamamak için tüm network işlemleri Coroutine içinde yapılmalı.
         viewModelScope.launch {
-            isLoading.value = true
-            errorMessage.value = ""
+            isLoading.value = true // Arayüzde yükleniyor animasyonu başlasın.
+            errorMessage.value = "" // Önceki hataları temizle.
 
             try {
-                // DÜZELTME: Gelen şehri Türkçe kurallarına göre düzeltiyoruz.
-                // Örn: "izmir" -> "İzmir", "şarkışla" -> "Şarkışla"
+                // API küçük harf beklediği için, kullanıcı nasıl yazarsa yazsın küçük harfe çeviriyoruz.
                 val locale = java.util.Locale("tr", "TR")
-                val duzeltilmisSehir = cityName.trim().lowercase(locale).replaceFirstChar {
-                    if (it.isLowerCase()) it.titlecase(locale) else it.toString()
-                }
+                val cleanedCityName = cityName.trim().lowercase(locale)
+                val apiCityName = normalizeCityName(cleanedCityName)
 
-                // Logcat'e yazdıralım (Aşağıda anlatacağım)
-                println("Aranan Şehir (Orijinal): $cityName")
-                println("Aranan Şehir (Düzeltilmiş): $duzeltilmisSehir")
-
-                // 1. Adım: Arama yap
-                val locationList = RetrofitInstance.api.searchLocation(duzeltilmisSehir)
+                // 1. Adım: Şehir adıyla ID'sini bul.
+                val locationList = RetrofitInstance.api.searchLocation(apiCityName)
 
                 if (locationList.isNotEmpty()) {
-                    val cityId = locationList[0].id
-                    println("Bulunan Şehir ID: $cityId") // ID'yi buldu mu görelim
+                    // API'den şehir bulunduysa...
+                    val foundCityName = cleanedCityName.replaceFirstChar { it.titlecase(locale) }
+                    currentCity.value = foundCityName // Arayüzdeki başlığı güncelle.
 
-                    // 2. Adım: Vakitleri çek
+                    // Son başarılı aramayı hafızaya kaydet.
+                    dataStoreManager.saveLastCity(foundCityName)
+
+                    // 2. Adım: Bulunan ID ile namaz vakitlerini çek.
+                    val cityId = locationList[0].id
                     val times = RetrofitInstance.api.getPrayerTimes(cityId)
                     prayerTimes.value = times
+                    errorMessage.value = "" // Her şey yolunda, hata mesajı olmasın.
+
                 } else {
-                    // Eğer liste boş geldiyse
-                    errorMessage.value = "$duzeltilmisSehir bulunamadı! Tam adını yazmayı deneyin (örn: Üsküdar)."
-                    println("HATA: Şehir listesi boş döndü.")
+                    // Eğer API bu isimde bir şehir bulamadıysa, kullanıcıyı bilgilendir.
+                    errorMessage.value = "'$cityName' bulunamadı! Farklı bir isimle deneyin."
+                    prayerTimes.value = emptyList() // Ekranda eski veri kalmasın.
                 }
 
             } catch (e: Exception) {
-                errorMessage.value = "Hata: ${e.localizedMessage}"
-                e.printStackTrace() // Hatayı Logcat'e yazdır
+                // İnternet yoksa veya API çöktüyse bu blok çalışır.
+                errorMessage.value = "Veriler alınırken bir sorun oluştu."
+                prayerTimes.value = emptyList()
+                e.printStackTrace() // Sorunu ayıklamak için hatayı Logcat'e yazdır.
             } finally {
+                // İşlem başarılı da olsa, hata da olsa yükleniyor animasyonunu durdur.
                 isLoading.value = false
             }
         }
+    }
+}
+
+// ViewModel'e kurucu (constructor) üzerinden parametre (DataStoreManager gibi) geçmek istediğimizde
+// bu şekilde bir Factory sınıfı oluşturmamız gerekiyor. Android sistemi, ViewModel'i nasıl
+// yaratacağını bu Factory'den öğreniyor.
+class MainViewModelFactory(private val dataStoreManager: DataStoreManager) : ViewModelProvider.Factory {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        if (modelClass.isAssignableFrom(MainViewModel::class.java)) {
+            @Suppress("UNCHECKED_CAST")
+            return MainViewModel(dataStoreManager) as T
+        }
+        throw IllegalArgumentException("Bu Factory sadece MainViewModel içindir.")
     }
 }

@@ -53,6 +53,10 @@ dependencies {
     // Retrofit ve Gson (İnternetten veri çekmek için)
     implementation("com.squareup.retrofit2:retrofit:2.9.0")
     implementation("com.squareup.retrofit2:converter-gson:2.9.0")
+    //Telefonda hafızaya kayıt için
+    implementation("androidx.datastore:datastore-preferences:1.0.0")
+    //Arayüz İkonları
+    implementation("androidx.compose.material:material-icons-extended:1.5.4")
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
